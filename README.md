@@ -32,6 +32,7 @@ You need a computer or server that stays on while the streamers are live, with *
 git clone <this repo> && cd clipping-system
 python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
 python -m pip install -r requirements.txt                       # includes streamlink
+python -m pip install -r requirements-laughter.txt              # optional: AI laughter detector
 cp config.example.yaml config.yaml
 cp .env.example .env
 ```
@@ -69,6 +70,11 @@ python -m clipper run     # runs until you stop it (Ctrl+C finishes the current 
 ```
 
 On first run the laughter model (~90 MB) downloads from Hugging Face.
+
+If `requirements-laughter.txt` won't install ("No matching distribution found for onnxruntime"), your Python
+version is newer than onnxruntime supports yet, or isn't 64-bit. Everything else still works, using a
+loudness-based detector instead. To get the AI detector, install 64-bit Python 3.12 from python.org and
+create the venv with it: `py -3.12 -m venv .venv`.
 
 ## Tuning
 

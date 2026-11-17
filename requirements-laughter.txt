@@ -1,0 +1,4 @@
+# Optional: the AI laughter detector (detection.laughter_model: ast).
+# Without these, the system falls back to a loudness-based detector.
+onnxruntime>=1.17
+huggingface_hub>=0.23

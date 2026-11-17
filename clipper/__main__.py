@@ -41,6 +41,17 @@ async def _check(cfg):
         print(f"✗ streamlink: {e} (run: python -m pip install -r requirements.txt)")
         ok = False
 
+    if cfg.detection.laughter_model == "ast":
+        try:
+            import onnxruntime  # noqa: F401
+            import huggingface_hub  # noqa: F401
+            print("✓ laughter detector: AI model (downloads ~90 MB on first run)")
+        except ImportError:
+            print("• laughter detector: AI model not installed, using loudness instead "
+                  "(optional: python -m pip install -r requirements-laughter.txt)")
+    else:
+        print(f"• laughter detector: {cfg.detection.laughter_model}")
+
     from .twitch import TwitchClient
     try:
         tw = TwitchClient(cfg.secrets.twitch_client_id, cfg.secrets.twitch_client_secret)
