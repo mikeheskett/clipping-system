@@ -27,10 +27,19 @@ def cmd_run(cfg, args):
 
 async def _check(cfg):
     ok = True
-    for tool in ("ffmpeg", "ffprobe", "streamlink"):
+    for tool in ("ffmpeg", "ffprobe"):
         found = shutil.which(tool)
         print(f"{'✓' if found else '✗'} {tool}: {found or 'not found on PATH'}")
         ok &= bool(found)
+    import subprocess
+    try:
+        ver = subprocess.run([sys.executable, "-m", "streamlink_cli", "--version"],
+                             capture_output=True, text=True, timeout=60).stdout.strip()
+        print(f"{'✓' if ver else '✗'} streamlink: {ver or 'installed but would not start'}")
+        ok &= bool(ver)
+    except Exception as e:
+        print(f"✗ streamlink: {e} (run: python -m pip install -r requirements.txt)")
+        ok = False
 
     from .twitch import TwitchClient
     try:

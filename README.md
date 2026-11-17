@@ -31,7 +31,7 @@ You need a computer or server that stays on while the streamers are live, with *
 ```bash
 git clone <this repo> && cd clipping-system
 python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
-pip install -r requirements.txt                          # includes streamlink
+python -m pip install -r requirements.txt                       # includes streamlink
 cp config.example.yaml config.yaml
 cp .env.example .env
 ```
@@ -113,7 +113,7 @@ or "audio laughter 0.43".
 ## Tests
 
 ```bash
-pip install pytest && python -m pytest
+python -m pip install pytest && python -m pytest
 ```
 
 The tests need ffmpeg. They feed a synthetic stream through the real recorder and clip cutter, and run the whole

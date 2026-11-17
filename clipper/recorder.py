@@ -17,6 +17,7 @@ import asyncio
 import logging
 import os
 import signal
+import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -54,6 +55,15 @@ def read_segment_rows(list_path: Path) -> list[tuple[str, float, float]]:
     return rows
 
 
+def _interrupt(proc: asyncio.subprocess.Process):
+    """Ask a process to stop. Windows can't send SIGINT to a child, so it is terminated instead;
+    either way ffmpeg sees the pipe close and finishes the last chunk."""
+    if sys.platform == "win32":
+        proc.terminate()
+    else:
+        proc.send_signal(signal.SIGINT)
+
+
 class Recorder:
     def __init__(self, login: str, chunk_dir: Path, quality: str, chunk_seconds: int,
                  queue: asyncio.Queue | None = None, source_cmd: list[str] | None = None):
@@ -63,7 +73,9 @@ class Recorder:
         self.queue: asyncio.Queue[Chunk] = queue if queue is not None else asyncio.Queue()
         # Any command that writes an MPEG-TS stream to stdout; Streamlink unless overridden (tests).
         self.source_cmd = source_cmd or [
-            "streamlink", "--stdout", "--twitch-disable-ads", "--retry-open", "3", "--loglevel", "warning",
+            # Run Streamlink through Python rather than streamlink.exe: Windows app-control policies
+            # (Smart App Control, AppLocker) often block the unsigned launcher but allow python.exe.
+            sys.executable, "-m", "streamlink_cli", "--stdout", "--twitch-disable-ads", "--retry-open", "3", "--loglevel", "warning",
             f"https://www.twitch.tv/{login}", quality,
         ]
         self.list_path: Path | None = None
@@ -130,7 +142,7 @@ class Recorder:
     async def stop(self):
         """Stop streamlink; ffmpeg then sees end-of-input and finalises the last chunk."""
         if self._streamlink and self._streamlink.returncode is None:
-            self._streamlink.send_signal(signal.SIGINT)
+            _interrupt(self._streamlink)
             try:
                 await asyncio.wait_for(self._streamlink.wait(), 20)
             except asyncio.TimeoutError:
@@ -139,7 +151,7 @@ class Recorder:
             try:
                 await asyncio.wait_for(self._ffmpeg.wait(), 30)
             except asyncio.TimeoutError:
-                self._ffmpeg.send_signal(signal.SIGINT)
+                _interrupt(self._ffmpeg)
                 await self._ffmpeg.wait()
         if self._watch_task:
             await self._watch_task
