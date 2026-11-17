@@ -43,7 +43,7 @@ Then fill in `.env` and `config.yaml`.
 2. OAuth Redirect URL: `http://localhost`, category: anything, client type: **Confidential**.
 3. Copy the **Client ID** and click **New Secret** → put both in `.env`.
 
-The streamers are already listed in `config.yaml`: TimTheTatman, TheBurntPeanut, xQc, Jynxi.
+The streamers are already listed in `config.yaml`: TimTheTatman, TheBurntPeanut, xQc, Jynxzi.
 
 ### 2. Discord
 1. <https://discord.com/developers/applications> → **New Application** → **Bot** → **Reset Token** → copy it into
