@@ -1,0 +1,54 @@
+# Copy to config.yaml and edit. Secrets (API keys, bot token) go in .env, not here.
+
+streamers:
+  - TimTheTatman
+  - TheBurntPeanut
+  - xQc
+  - Jynxi
+
+# How often to ask Twitch who is live.
+poll_interval_seconds: 120
+data_dir: ./data
+
+recording:
+  # Streamlink quality, first available wins.
+  quality: "720p60,720p,best"
+  chunk_minutes: 10
+  # Raw 10-minute chunks are deleted after this long (clips are kept).
+  keep_chunks_hours: 6
+
+detection:
+  # Audio laughter: ast (AudioSet model, ~90 MB download on first run), loudness (cheap fallback), off
+  laughter_model: ast
+  # A second's score = weighted mix of the signals below, each 0..1. Clip when it passes `threshold`.
+  weights:
+    chat_spike: 0.4       # chat suddenly faster than its usual pace
+    chat_laughter: 0.3    # share of chat messages that are laugh reactions (KEKW, LUL, 😂, lmao…)
+    audio_laughter: 0.3   # laughter heard on stream
+  threshold: 0.6
+  chat_window_seconds: 12        # chat counted in the seconds right after a moment
+  chat_baseline_seconds: 300     # "normal" chat pace = median over the last 5 minutes
+  chat_spike_full_ratio: 3.0     # 3x normal pace = full chat_spike score
+  chat_laughter_full_share: 0.35 # 35% of messages laughing = full chat_laughter score
+  audio_laughter_full_prob: 0.3   # AudioSet laughter prob that counts as full laughter (speech ≈ 0.00, laughs ≈ 0.15-0.6)
+  min_seconds_between_clips: 90
+  max_clips_per_chunk: 3
+  # laugh_terms: [LUL, KEKW, OMEGALUL, ICANT, LMAO, "😂", "💀"]   # override the built-in list
+
+clips:
+  preroll_seconds: 40    # build-up kept before the moment (the video suggests 35-45s)
+  postroll_seconds: 20
+  format: vertical       # vertical (9:16, blurred background) or original (16:9)
+
+discord:
+  # Right-click the channel → Copy Channel ID (turn on Developer Mode in Discord settings first).
+  channel_id: 0
+  # Only these Discord user IDs can approve/reject. Leave empty to allow anyone in the channel.
+  approver_user_ids: []
+  preview_max_mb: 9.5
+
+postforme:
+  # IDs from `python -m clipper accounts`. Leave empty to post to every connected account.
+  social_account_ids: []
+  caption_template: "{streamer} moment 😂 #{streamer_tag} #twitch #gta6 #clips"
+  title_template: "{streamer} moment 😂"
