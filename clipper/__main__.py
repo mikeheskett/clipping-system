@@ -19,10 +19,13 @@ def cmd_run(cfg, args):
         sys.exit("No streamers in config.yaml (copy config.example.yaml to config.yaml)")
     if not (cfg.secrets.twitch_client_id and cfg.secrets.twitch_client_secret):
         sys.exit("Set TWITCH_CLIENT_ID and TWITCH_CLIENT_SECRET in .env (see README)")
+    from .discord_bot import DiscordSetupError
     try:
         asyncio.run(App(cfg).run())
     except KeyboardInterrupt:
         pass
+    except DiscordSetupError as e:
+        sys.exit(f"Discord setup problem: {e}")
 
 
 async def _check(cfg):
@@ -156,7 +159,8 @@ def main(argv=None):
 
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    for noisy in ("httpx", "httpx2", "huggingface_hub", "discord.gateway", "discord.client", "httpcore"):
+    logging.getLogger("discord.client").setLevel(logging.ERROR)  # hides "PyNaCl/davey not installed" voice notes
+    for noisy in ("httpx", "httpx2", "huggingface_hub", "discord.gateway", "httpcore"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
     cfg = load_config(args.config)
     {"run": cmd_run, "check": cmd_check, "accounts": cmd_accounts, "analyze": cmd_analyze}[args.cmd](cfg, args)

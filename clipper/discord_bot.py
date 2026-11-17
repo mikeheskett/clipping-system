@@ -92,6 +92,10 @@ def modal_values(components: list) -> dict[str, str]:
     return out
 
 
+class DiscordSetupError(RuntimeError):
+    pass
+
+
 class DiscordBot:
     def __init__(self, token: str, channel_id: int, approver_ids: list[int], store: Store,
                  on_approve: Callable[[int], Awaitable[None]]):
@@ -107,15 +111,41 @@ class DiscordBot:
         self.client.event(self.on_interaction)
 
     async def start(self):
-        asyncio.create_task(self.client.start(self.token), name="discord")
-        await asyncio.wait_for(self._ready.wait(), timeout=60)
+        """Log in and find the channel; raises DiscordSetupError with a readable reason if that fails."""
+        self._error: str | None = None
+        login = asyncio.create_task(self.client.start(self.token), name="discord")
+        ready = asyncio.create_task(self._ready.wait())
+        done, _ = await asyncio.wait({login, ready}, timeout=60, return_when=asyncio.FIRST_COMPLETED)
+        if login in done:  # client.start only returns early if logging in failed
+            ready.cancel()
+            exc = login.exception()
+            if isinstance(exc, discord.LoginFailure):
+                raise DiscordSetupError("Discord rejected the bot token. Check DISCORD_BOT_TOKEN in .env "
+                                        "(Developer Portal → your app → Bot → Reset Token).")
+            raise DiscordSetupError(f"Could not connect to Discord: {exc}")
+        if not done:
+            raise DiscordSetupError("Timed out connecting to Discord.")
+        if self._error:
+            await self.client.close()
+            raise DiscordSetupError(self._error)
 
     async def close(self):
         await self.client.close()
 
     async def on_ready(self):
-        self._channel = self.client.get_channel(self.channel_id) or await self.client.fetch_channel(self.channel_id)
-        log.info("discord connected as %s, posting to #%s", self.client.user, getattr(self._channel, "name", "?"))
+        try:
+            self._channel = (self.client.get_channel(self.channel_id)
+                             or await self.client.fetch_channel(self.channel_id))
+            log.info("discord connected as %s, posting to #%s", self.client.user,
+                     getattr(self._channel, "name", "?"))
+        except discord.Forbidden:
+            self._error = (
+                f"The bot ({self.client.user}) can't see channel {self.channel_id}. Either the bot isn't in "
+                "that server yet (invite it from the Developer Portal → OAuth2 → URL Generator, scope 'bot'), "
+                "or it's a private channel the bot hasn't been added to (Edit Channel → Permissions).")
+        except discord.NotFound:
+            self._error = (f"No channel with ID {self.channel_id}. In Discord, right-click the channel name → "
+                           "Copy Channel ID, and put it in config.yaml under discord.channel_id.")
         self._ready.set()
 
     async def send(self, text: str):

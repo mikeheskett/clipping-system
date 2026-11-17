@@ -102,3 +102,37 @@ def test_modal_values_both_layouts():
     rows = [{"type": 1, "components": [{"type": 4, "custom_id": "caption", "value": "new cap"}]},
             {"type": 18, "component": {"type": 4, "custom_id": "title", "value": "new title"}}]
     assert modal_values(rows) == {"caption": "new cap", "title": "new title"}
+
+
+def test_discord_setup_errors_are_readable(tmp_path):
+    import discord
+    import pytest
+    from clipper.discord_bot import DiscordBot, DiscordSetupError
+
+    class Resp:
+        status, reason = 403, "Forbidden"
+
+    def make(start_behaviour, fetch_exc=None):
+        bot = DiscordBot("tok", 42, [], Store(tmp_path / "d.sqlite"), on_approve=None)
+
+        async def fake_start(token):
+            if start_behaviour == "bad-token":
+                raise discord.LoginFailure("Improper token has been passed.")
+            await bot.on_ready()
+            await asyncio.sleep(3600)
+
+        async def fake_fetch(cid):
+            raise fetch_exc
+
+        bot.client.start = fake_start
+        bot.client.get_channel = lambda cid: None
+        bot.client.fetch_channel = fake_fetch
+        bot.client.close = lambda: asyncio.sleep(0)
+        return bot
+
+    with pytest.raises(DiscordSetupError, match="rejected the bot token"):
+        asyncio.run(make("bad-token").start())
+    with pytest.raises(DiscordSetupError, match="can't see channel 42"):
+        asyncio.run(make("ok", discord.Forbidden(Resp(), {"code": 50001, "message": "Missing Access"})).start())
+    with pytest.raises(DiscordSetupError, match="No channel with ID 42"):
+        asyncio.run(make("ok", discord.NotFound(Resp(), "Unknown Channel")).start())
