@@ -15,7 +15,7 @@ VERTICAL_FILTER = (
     "[0:v]split[a][b];"
     "[a]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=20:5[bg];"
     "[b]scale=1080:-2[fg];"
-    "[bg][fg]overlay=(W-w)/2:(H-h)/2,format=yuv420p[v]"
+    "[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1,format=yuv420p[v]"
 )
 
 

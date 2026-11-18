@@ -59,6 +59,7 @@ def test_clip_across_chunk_boundary(recorded, tmp_path):
                                      capture_output=True, text=True).stdout)
     v = next(s for s in info["streams"] if s["codec_type"] == "video")
     assert (v["width"], v["height"]) == (1080, 1920)
+    assert v.get("sample_aspect_ratio", "1:1") == "1:1"   # square pixels: YouTube Shorts needs a true 9:16
     assert any(s["codec_type"] == "audio" for s in info["streams"])
 
 
