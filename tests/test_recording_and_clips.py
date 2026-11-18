@@ -95,3 +95,33 @@ def test_cut_always_contains_video(tmp_path, gop, offset):
                     "-g", str(gop), "-c:a", "aac", "-f", "mpegts", str(src)], check=True)
     out = cut_clip([Chunk(src, 1000.0, 30.0)], 1000 + offset, 1000 + offset + 3, tmp_path / "c.mp4")
     assert video_frames(out) >= 85  # ~3 s at 30 fps
+
+
+def test_streamlink_records_hls_when_pycryptodome_is_blocked(tmp_path):
+    """Windows Smart App Control can block pycryptodome's .pyd files; Streamlink must still record HLS."""
+    import functools
+    import http.server
+    import os
+    import subprocess
+    import sys
+    import threading
+
+    hls = tmp_path / "hls"
+    hls.mkdir()
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=6",
+                    "-c:v", "libx264", "-preset", "ultrafast", "-g", "60", "-f", "hls", "-hls_time", "2",
+                    "-hls_playlist_type", "vod", str(hls / "index.m3u8")], check=True)
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(hls))
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        out = subprocess.run(
+            [sys.executable, "-m", "clipper.streamlink_runner", "--stdout",
+             f"hls://http://127.0.0.1:{server.server_port}/index.m3u8", "best"],
+            capture_output=True, timeout=60, env={**os.environ, "CLIPPER_FORCE_CRYPTO_PLACEHOLDER": "1"})
+    finally:
+        server.shutdown()
+    assert out.returncode == 0, out.stderr.decode()[-1000:]
+    assert b"continuing without it" in out.stderr
+    (tmp_path / "out.ts").write_bytes(out.stdout)
+    assert abs(probe_duration(tmp_path / "out.ts") - 6) < 0.5

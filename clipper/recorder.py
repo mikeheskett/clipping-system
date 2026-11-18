@@ -75,7 +75,7 @@ class Recorder:
         self.source_cmd = source_cmd or [
             # Run Streamlink through Python rather than streamlink.exe: Windows app-control policies
             # (Smart App Control, AppLocker) often block the unsigned launcher but allow python.exe.
-            sys.executable, "-m", "streamlink_cli", "--stdout", "--twitch-disable-ads", "--retry-open", "3", "--loglevel", "warning",
+            sys.executable, "-m", "clipper.streamlink_runner", "--stdout", "--twitch-disable-ads", "--retry-open", "3", "--loglevel", "warning",
             f"https://www.twitch.tv/{login}", quality,
         ]
         self.list_path: Path | None = None

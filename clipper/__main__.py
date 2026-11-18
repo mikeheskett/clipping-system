@@ -36,7 +36,7 @@ async def _check(cfg):
         ok &= bool(found)
     import subprocess
     try:
-        ver = subprocess.run([sys.executable, "-m", "streamlink_cli", "--version"],
+        ver = subprocess.run([sys.executable, "-m", "clipper.streamlink_runner", "--version"],
                              capture_output=True, text=True, timeout=60).stdout.strip()
         print(f"{'✓' if ver else '✗'} streamlink: {ver or 'installed but would not start'}")
         ok &= bool(ver)
