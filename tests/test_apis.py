@@ -92,6 +92,7 @@ def test_discord_embed_and_buttons(tmp_path):
               "xQc moment 😂", "xQc moment")
     e = clip_embed(c)
     assert "clip #1" in e.title and any(f.value == "4.1x normal" for f in e.fields)
+    assert any(f.name.startswith("Title") and f.value == "xQc moment" for f in e.fields)
     ids = [b.custom_id for b in clip_view(c).children]
     assert ids == ["clip:approve:1", "clip:caption:1", "clip:reject:1"]
     s.update(c.id, status=POSTED)

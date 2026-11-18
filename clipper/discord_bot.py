@@ -1,4 +1,4 @@
-"""Step 3: Discord — live/recording notifications, and clip review with Approve / Edit caption / Reject.
+"""Step 3: Discord — live/recording notifications, and clip review with Approve / Edit title & caption / Reject.
 
 Buttons carry the clip ID in their custom_id and are handled in on_interaction, so they keep working
 after the bot restarts.
@@ -33,6 +33,7 @@ def clip_embed(clip: Clip) -> discord.Embed:
         description=clip.caption,
         color=STATUS_COLOR.get(clip.status, 0x95A5A6),
     )
+    e.add_field(name="Title (YouTube / TikTok)", value=clip.title or "*(none)*", inline=False)
     e.add_field(name="Status", value=STATUS_LABEL.get(clip.status, clip.status), inline=False)
     e.add_field(name="Moment", value=f"<t:{int(clip.moment_ts)}:T> (<t:{int(clip.moment_ts)}:R>)")
     e.add_field(name="Score", value=f"{clip.score:.2f}")
@@ -60,7 +61,7 @@ def clip_view(clip: Clip) -> discord.ui.View | None:
     v = discord.ui.View(timeout=None)
     v.add_item(discord.ui.Button(label="Approve & post", style=discord.ButtonStyle.success,
                                  custom_id=f"clip:approve:{clip.id}"))
-    v.add_item(discord.ui.Button(label="Edit caption", style=discord.ButtonStyle.secondary,
+    v.add_item(discord.ui.Button(label="Edit title / caption", style=discord.ButtonStyle.secondary,
                                  custom_id=f"clip:caption:{clip.id}"))
     v.add_item(discord.ui.Button(label="Reject", style=discord.ButtonStyle.danger,
                                  custom_id=f"clip:reject:{clip.id}"))
@@ -69,13 +70,13 @@ def clip_view(clip: Clip) -> discord.ui.View | None:
 
 class CaptionModal(discord.ui.Modal):
     def __init__(self, clip: Clip):
-        super().__init__(title=f"Caption for clip #{clip.id}", custom_id=f"clip:captionmodal:{clip.id}")
-        self.caption = discord.ui.TextInput(label="Caption", style=discord.TextStyle.paragraph,
-                                            default=clip.caption, max_length=2000, custom_id="caption")
+        super().__init__(title=f"Title & caption for clip #{clip.id}", custom_id=f"clip:captionmodal:{clip.id}")
         self.title_input = discord.ui.TextInput(label="Title (YouTube / TikTok)", default=clip.title,
                                                 max_length=100, required=False, custom_id="title")
-        self.add_item(self.caption)
+        self.caption = discord.ui.TextInput(label="Caption", style=discord.TextStyle.paragraph,
+                                            default=clip.caption, max_length=2000, custom_id="caption")
         self.add_item(self.title_input)
+        self.add_item(self.caption)
 
 
 def modal_values(components: list) -> dict[str, str]:
@@ -213,7 +214,7 @@ class DiscordBot:
 
         elif action == "caption":
             if clip.status not in (PENDING, FAILED):
-                await interaction.response.send_message("Captions can only change before posting.", ephemeral=True)
+                await interaction.response.send_message("The title and caption can only change before posting.", ephemeral=True)
                 return
             await interaction.response.send_modal(CaptionModal(clip))
 

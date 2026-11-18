@@ -18,7 +18,7 @@ to Discord for approval. When you approve a clip, it is posted to your socials t
                                                       ▼
                         moment found → clip from 40 s before to 20 s after, vertical 9:16
                                                       ▼
-                 Discord: preview video + [Approve & post] [Edit caption] [Reject]
+                 Discord: preview video + [Approve & post] [Edit title / caption] [Reject]
                                                       ▼  Approve
                  Post for Me: upload → post to every connected account → links back in Discord
 ```
