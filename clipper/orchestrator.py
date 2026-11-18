@@ -124,7 +124,7 @@ class StreamerSession:
         loop = asyncio.get_running_loop()
         try:
             cf = await loop.run_in_executor(RENDER_POOL, render_clip, m, list(self.chunks),
-                                            self.clip_dir, stem, self.cfg)
+                                            self.clip_dir, stem, self.cfg, self.name)
         except Exception:
             log.exception("%s: failed to cut clip at %s", self.name, m.ts)
             return

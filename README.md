@@ -99,6 +99,22 @@ python -m clipper analyze data/streams/xqc/<session>/chunks/chunk_..._0003.ts \
 Each Discord clip card shows why the clip was picked, for example "chat activity 4.2x normal", "chat laughing 61%"
 or "audio laughter 0.43".
 
+## Clip editing
+
+TikTok, Shorts and Reels push down videos that look like straight re-uploads, so each clip is edited (settings
+under `clips` in `config.yaml`):
+
+- **Title**: the streamer's name in a coloured box above the gameplay (`title`, vertical clips only).
+- **Punch-in**: the video cuts to a closer zoom just before the funny moment and holds for about 3 seconds (`punch_zoom`).
+- **Colour grade**: more contrast and saturation (`color_grade`).
+- **Progress bar**: a thin bar along the bottom that fills as the clip plays (`progress_bar`).
+- **Different every clip**: the zoom, grade, background tint and blur, accent colour and gameplay position change a
+  little each time (`vary_each_clip`). The same clip always comes out the same if it is cut again.
+
+`edit: false` turns all of this off. If an edited render fails (for example ffmpeg has no `drawtext`), a plain clip
+is made instead and a warning is logged. If no title appears, set `font_file`, for example
+`C:/Windows/Fonts/impact.ttf`.
+
 ## Files and disk use
 
 - `data/clips/<streamer>/…mp4` is the finished clips. These are kept.

@@ -9,7 +9,7 @@ from pathlib import Path
 from .analysis import Moment, pick_moments, score_chunk
 from .audio import get_detector, load_audio
 from .chat import ChatMessage
-from .clips import cut_clip, make_preview
+from .clips import EditStyle, cut_clip, make_preview
 from .config import Config
 from .recorder import Chunk
 
@@ -44,10 +44,21 @@ def clip_window(m: Moment, cfg: Config) -> tuple[float, float]:
     return m.ts - cfg.clips.preroll_seconds, m.ts + cfg.clips.postroll_seconds
 
 
-def render_clip(m: Moment, chunks: list[Chunk], out_dir: Path, stem: str, cfg: Config) -> ClipFile:
+def edit_style(streamer: str, cfg: Config) -> EditStyle | None:
+    c = cfg.clips
+    if not c.edit:
+        return None
+    title = c.title.format(streamer=streamer).strip() if streamer and c.title else ""
+    return EditStyle(title=title, punch_zoom=c.punch_zoom, progress_bar=c.progress_bar,
+                     color_grade=c.color_grade, vary=c.vary_each_clip, font_file=c.font_file)
+
+
+def render_clip(m: Moment, chunks: list[Chunk], out_dir: Path, stem: str, cfg: Config,
+                streamer: str = "") -> ClipFile:
     """Cut the clip and its Discord preview (blocking)."""
     start, end = clip_window(m, cfg)
-    path = cut_clip(chunks, start, end, out_dir / f"{stem}.mp4", cfg.clips.format)
+    path = cut_clip(chunks, start, end, out_dir / f"{stem}.mp4", cfg.clips.format,
+                    style=edit_style(streamer, cfg), peak=m.ts)
     preview = make_preview(path, out_dir / f"{stem}_preview.mp4", cfg.discord.preview_max_mb)
     return ClipFile(m, path, preview)
 

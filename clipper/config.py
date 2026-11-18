@@ -50,6 +50,14 @@ class ClipConfig:
     postroll_seconds: int = 20
     # "vertical" = 9:16 with blurred background (TikTok / Shorts / Reels), "original" = keep 16:9.
     format: str = "vertical"
+    # Editing so clips look like edits, not raw re-uploads (platforms push down duplicate/unoriginal videos).
+    edit: bool = True
+    title: str = "{streamer}"   # text above the gameplay in vertical clips ("" = none; emoji won't render)
+    punch_zoom: bool = True     # zoom in on the funny moment for a few seconds
+    progress_bar: bool = True   # bar along the bottom that fills as the clip plays
+    color_grade: bool = True    # punchier contrast and colour
+    vary_each_clip: bool = True # randomise zoom, grade, colours and layout a little per clip
+    font_file: str = ""         # font for the title; empty = find a bold system font (Impact/Arial Bold)
 
 
 @dataclass

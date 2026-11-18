@@ -134,7 +134,7 @@ def cmd_analyze(cfg, args):
         if args.no_clips:
             print(line)
             continue
-        cf = render_clip(m, [chunk], out, f"{video.stem}_{int(t)}s", cfg)
+        cf = render_clip(m, [chunk], out, f"{video.stem}_{int(t)}s", cfg, args.streamer or "")
         print(f"{line}\n    → {cf.path}")
 
 
@@ -155,6 +155,7 @@ def main(argv=None):
     a.add_argument("--max", type=int, default=10)
     a.add_argument("--out", default="data/clips/manual")
     a.add_argument("--no-clips", action="store_true", help="only list moments")
+    a.add_argument("--streamer", help="name shown as the clip title")
     args = p.parse_args(argv)
 
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,

@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from clipper.clips import chunks_for_window, cut_clip, make_preview, probe_duration
+from clipper.clips import EditStyle, _edited_filter, chunks_for_window, cut_clip, make_preview, probe_duration
 from clipper.recorder import Recorder
 
 pytestmark = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg not installed")
@@ -61,6 +61,35 @@ def test_clip_across_chunk_boundary(recorded, tmp_path):
     assert (v["width"], v["height"]) == (1080, 1920)
     assert v.get("sample_aspect_ratio", "1:1") == "1:1"   # square pixels: YouTube Shorts needs a true 9:16
     assert any(s["codec_type"] == "audio" for s in info["streams"])
+
+
+def test_edited_clip_is_vertical_with_audio(recorded, tmp_path):
+    chunks, _ = recorded
+    t0 = chunks[0].start
+    out = cut_clip(chunks, t0 + 1.0, t0 + 6.0, tmp_path / "edited.mp4", fmt="vertical",
+                   style=EditStyle(title="TheBurntPeanut"), peak=t0 + 4.0)
+    assert abs(probe_duration(out) - 5.0) < 0.3
+    import json, subprocess
+    info = json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_streams", "-of", "json", str(out)],
+                                     capture_output=True, text=True).stdout)
+    v = next(s for s in info["streams"] if s["codec_type"] == "video")
+    assert (v["width"], v["height"]) == (1080, 1920)
+    assert any(s["codec_type"] == "audio" for s in info["streams"])
+
+
+def test_each_clip_gets_its_own_look(tmp_path):
+    a = _edited_filter(EditStyle(), "vertical", 0.0, 60.0, 40.0, "xqc_20261118-200000", tmp_path)
+    b = _edited_filter(EditStyle(), "vertical", 0.0, 60.0, 40.0, "xqc_20261118-201500", tmp_path)
+    again = _edited_filter(EditStyle(), "vertical", 0.0, 60.0, 40.0, "xqc_20261118-200000", tmp_path)
+    assert a != b and a == again
+
+
+def test_edited_render_falls_back_to_plain_clip(recorded, tmp_path, monkeypatch):
+    import clipper.clips as clips
+    monkeypatch.setattr(clips, "_edited_filter", lambda *a, **k: "[0:v]nosuchfilter[v]")
+    chunks, _ = recorded
+    out = cut_clip(chunks, chunks[0].start, chunks[0].start + 3, tmp_path / "f.mp4", style=EditStyle())
+    assert 2.5 < probe_duration(out) < 3.5
 
 
 def test_clip_window_is_clamped_to_recording(recorded, tmp_path):

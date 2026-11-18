@@ -39,6 +39,15 @@ clips:
   preroll_seconds: 40    # build-up kept before the moment (the video suggests 35-45s)
   postroll_seconds: 20
   format: vertical       # vertical (9:16, blurred background) or original (16:9)
+  # Edits so each clip looks like an edit rather than a straight re-upload, which TikTok / Shorts /
+  # Reels push down as unoriginal. Set edit: false for plain clips.
+  edit: true
+  title: "{streamer}"    # title above the gameplay (vertical only). "" = none. Emoji won't render.
+  punch_zoom: true       # zoom in on the funny moment for ~3 s
+  progress_bar: true     # bar along the bottom that fills as the clip plays
+  color_grade: true      # punchier contrast and colour
+  vary_each_clip: true   # randomise zoom, grade, background tint, accent colour and layout per clip
+  font_file: ""          # e.g. C:/Windows/Fonts/impact.ttf — empty finds a bold system font
 
 discord:
   # Right-click the channel → Copy Channel ID (turn on Developer Mode in Discord settings first).
