@@ -74,16 +74,30 @@ def ast_features(wave: np.ndarray) -> np.ndarray:
     return ((fbank - _AST_MEAN) / (_AST_STD * 2)).astype(np.float32)
 
 
+def _model_file(name: str) -> str:
+    """Path to a model file: the copy downloaded on an earlier run if there is one, so starting up needs
+    no network, else download it. Downloads are anonymous; the model is public, so no HF_TOKEN is needed."""
+    import warnings
+    from huggingface_hub import hf_hub_download
+    logging.getLogger("huggingface_hub").setLevel(logging.ERROR)  # hides the "set a HF_TOKEN" warning
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*HF_TOKEN.*")
+        try:
+            return hf_hub_download(AST_REPO, name, local_files_only=True)
+        except Exception:
+            log.info("downloading laughter model file %s (first run only)", name)
+            return hf_hub_download(AST_REPO, name)
+
+
 class AstLaughterDetector:
     window_seconds = 10.0
     hop_seconds = 5.0
 
     def __init__(self):
         import onnxruntime as ort
-        from huggingface_hub import hf_hub_download
 
-        model_path = hf_hub_download(AST_REPO, AST_FILE)
-        labels = json.loads(Path(hf_hub_download(AST_REPO, "config.json")).read_text())["id2label"]
+        model_path = _model_file(AST_FILE)
+        labels = json.loads(Path(_model_file("config.json")).read_text())["id2label"]
         self.laugh_ids = [int(i) for i, name in labels.items() if name in LAUGH_LABELS]
         self.session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
         self.input_name = self.session.get_inputs()[0].name
