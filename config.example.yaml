@@ -42,7 +42,7 @@ clips:
   # Edits so each clip looks like an edit rather than a straight re-upload, which TikTok / Shorts /
   # Reels push down as unoriginal. Set edit: false for plain clips.
   edit: true
-  title: "{streamer}"    # title above the gameplay (vertical only). "" = none. Emoji won't render.
+  title: "{streamer}"    # text above the gameplay (vertical only); changeable per clip in Discord. "" = none.
   punch_zoom: true       # zoom in on the funny moment for ~3 s
   progress_bar: true     # bar along the bottom that fills as the clip plays
   color_grade: true      # punchier contrast and colour

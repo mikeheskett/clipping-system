@@ -6,7 +6,8 @@ import time
 
 import pytest
 
-from clipper.clips import EditStyle, _edited_filter, chunks_for_window, cut_clip, make_preview, probe_duration
+from clipper.clips import (EditStyle, _edited_filter, chunks_for_window, cut_clip, make_preview, probe_duration,
+                          retitle, text_free_path)
 from clipper.recorder import Recorder
 
 pytestmark = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg not installed")
@@ -75,6 +76,41 @@ def test_edited_clip_is_vertical_with_audio(recorded, tmp_path):
     v = next(s for s in info["streams"] if s["codec_type"] == "video")
     assert (v["width"], v["height"]) == (1080, 1920)
     assert any(s["codec_type"] == "audio" for s in info["streams"])
+
+
+def title_area_hash(path):
+    """Hash of the top part of the 1 s frame, where the text on the video sits."""
+    import hashlib, subprocess
+    raw = subprocess.run(["ffmpeg", "-loglevel", "error", "-ss", "1", "-i", str(path), "-frames:v", "1",
+                          "-vf", "crop=1080:700:0:0,scale=108:70", "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+                         capture_output=True, check=True).stdout
+    return hashlib.md5(bytes(b // 32 for b in raw)).hexdigest()
+
+
+def test_text_on_video_can_be_changed(recorded, tmp_path):
+    chunks, _ = recorded
+    t0 = chunks[0].start
+    clip = cut_clip(chunks, t0 + 1.0, t0 + 4.0, tmp_path / "xqc_1.mp4", fmt="vertical",
+                    style=EditStyle(title="xQc"), peak=t0 + 2.0)
+    base = text_free_path(clip)
+    assert base.exists()
+    original = title_area_hash(clip)
+    assert original != title_area_hash(base)                     # the copy really has no text
+
+    retitle(clip, "BEST MOMENT EVER", EditStyle())
+    assert title_area_hash(clip) not in (original, title_area_hash(base))
+    assert abs(probe_duration(clip) - 3.0) < 0.3
+
+    retitle(clip, "", EditStyle())                               # empty text = no text at all
+    assert title_area_hash(clip) == title_area_hash(base)
+
+
+def test_plain_and_landscape_clips_have_no_text_free_copy(recorded, tmp_path):
+    chunks, _ = recorded
+    t0 = chunks[0].start
+    plain = cut_clip(chunks, t0, t0 + 2, tmp_path / "plain.mp4", fmt="vertical")
+    wide = cut_clip(chunks, t0, t0 + 2, tmp_path / "wide.mp4", fmt="original", style=EditStyle(title="x"))
+    assert not text_free_path(plain).exists() and not text_free_path(wide).exists()
 
 
 def test_each_clip_gets_its_own_look(tmp_path):

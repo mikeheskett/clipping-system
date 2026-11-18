@@ -13,7 +13,8 @@ from typing import Awaitable, Callable
 
 import discord
 
-from .store import FAILED, PENDING, POSTED, POSTING, REJECTED, Clip, Store
+from .clips import can_edit_text
+from .store import FAILED, PENDING, POSTED, POSTING, REJECTED, RENDERING, Clip, Store
 
 log = logging.getLogger(__name__)
 
@@ -23,8 +24,10 @@ STATUS_LABEL = {
     POSTED: "✅ Posted",
     REJECTED: "🗑️ Rejected",
     FAILED: "⚠️ Posting failed — press Approve to retry",
+    RENDERING: "🎬 Updating the text on the video… (about a minute)",
 }
-STATUS_COLOR = {PENDING: 0xF1C40F, POSTING: 0x3498DB, POSTED: 0x2ECC71, REJECTED: 0x7F8C8D, FAILED: 0xE74C3C}
+STATUS_COLOR = {PENDING: 0xF1C40F, POSTING: 0x3498DB, POSTED: 0x2ECC71, REJECTED: 0x7F8C8D, FAILED: 0xE74C3C,
+                RENDERING: 0x9B59B6}
 
 
 def clip_embed(clip: Clip) -> discord.Embed:
@@ -34,6 +37,8 @@ def clip_embed(clip: Clip) -> discord.Embed:
         color=STATUS_COLOR.get(clip.status, 0x95A5A6),
     )
     e.add_field(name="Title (YouTube / TikTok)", value=clip.title or "*(none)*", inline=False)
+    if clip.video_text or can_edit_text(Path(clip.path)):
+        e.add_field(name="Text on video", value=clip.video_text or "*(none)*", inline=False)
     e.add_field(name="Status", value=STATUS_LABEL.get(clip.status, clip.status), inline=False)
     e.add_field(name="Moment", value=f"<t:{int(clip.moment_ts)}:T> (<t:{int(clip.moment_ts)}:R>)")
     e.add_field(name="Score", value=f"{clip.score:.2f}")
@@ -77,6 +82,11 @@ class CaptionModal(discord.ui.Modal):
                                             default=clip.caption, max_length=2000, custom_id="caption")
         self.add_item(self.title_input)
         self.add_item(self.caption)
+        if can_edit_text(Path(clip.path)):
+            self.video_text = discord.ui.TextInput(label="Text on video (emoji won't show)",
+                                                   default=clip.video_text, max_length=60, required=False,
+                                                   custom_id="video_text")
+            self.add_item(self.video_text)
 
 
 def modal_values(components: list) -> dict[str, str]:
@@ -99,12 +109,14 @@ class DiscordSetupError(RuntimeError):
 
 class DiscordBot:
     def __init__(self, token: str, channel_id: int, approver_ids: list[int], store: Store,
-                 on_approve: Callable[[int], Awaitable[None]]):
+                 on_approve: Callable[[int], Awaitable[None]],
+                 on_video_text: Callable[[int, str, str], Awaitable[None]] | None = None):
         self.token = token
         self.channel_id = channel_id
         self.approver_ids = set(approver_ids)
         self.store = store
         self.on_approve = on_approve
+        self.on_video_text = on_video_text
         self.client = discord.Client(intents=discord.Intents.default())
         self._ready = asyncio.Event()
         self._channel: discord.abc.Messageable | None = None
@@ -164,13 +176,22 @@ class DiscordBot:
         msg = await self._channel.send(**kwargs)
         return msg.id
 
-    async def refresh_clip(self, clip_id: int):
+    async def refresh_clip(self, clip_id: int, new_video: bool = False):
+        """Update a clip's card; with `new_video`, also swap in the re-rendered preview."""
         clip = self.store.get(clip_id)
         if not clip or not clip.discord_message_id:
             return
         try:
             msg = await self._channel.fetch_message(clip.discord_message_id)
-            await msg.edit(embed=clip_embed(clip), view=clip_view(clip))
+            kwargs = {"embed": clip_embed(clip), "view": clip_view(clip)}
+            if new_video:
+                if clip.preview_path and Path(clip.preview_path).exists():
+                    kwargs["attachments"] = [discord.File(clip.preview_path, filename=f"clip_{clip.id}.mp4")]
+                    kwargs["content"] = None
+                else:
+                    kwargs["attachments"] = []
+                    kwargs["content"] = "(preview too large to attach — the full clip is saved on the server)"
+            await msg.edit(**kwargs)
         except discord.HTTPException as e:
             log.warning("could not update Discord message for clip %s: %s", clip_id, e)
 
@@ -220,11 +241,24 @@ class DiscordBot:
 
         elif action == "captionmodal":
             values = modal_values(data.get("components", []))
+            if clip.status not in (PENDING, FAILED):
+                await interaction.response.send_message(
+                    "The title and caption can only change before posting.", ephemeral=True)
+                return
             caption = values.get("caption") or clip.caption
             title = values.get("title", clip.title)
             self.store.update(clip_id, caption=caption, title=title)
+            new_text = values.get("video_text", clip.video_text).strip()
+            redraw = (new_text != clip.video_text and self.on_video_text is not None
+                      and can_edit_text(Path(clip.path)))
+            if redraw:
+                previous = clip.status
+                self.store.update(clip_id, status=RENDERING)
             clip = self.store.get(clip_id)
             await interaction.response.edit_message(embed=clip_embed(clip), view=clip_view(clip))
+            if redraw:
+                log.info("clip %s: text on video changed to %r by %s", clip_id, new_text, interaction.user)
+                asyncio.create_task(self.on_video_text(clip_id, new_text, previous))
 
 
 class LogOnlyNotifier:
@@ -240,4 +274,4 @@ class LogOnlyNotifier:
         log.info("[notify] new clip #%s for %s (score %.2f): %s", clip.id, clip.streamer, clip.score, clip.path)
         return 0
 
-    async def refresh_clip(self, clip_id: int): ...
+    async def refresh_clip(self, clip_id: int, new_video: bool = False): ...

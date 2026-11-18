@@ -99,6 +99,39 @@ def test_discord_embed_and_buttons(tmp_path):
     assert clip_view(s.get(c.id)) is None
 
 
+def test_old_database_gets_video_text_column(tmp_path):
+    import sqlite3
+    db = tmp_path / "old.sqlite"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE clips (id INTEGER PRIMARY KEY AUTOINCREMENT, streamer TEXT NOT NULL, path TEXT NOT NULL,"
+                " preview_path TEXT, moment_ts REAL NOT NULL, score REAL NOT NULL, signals TEXT NOT NULL DEFAULT '{}',"
+                " details TEXT NOT NULL DEFAULT '{}', caption TEXT NOT NULL, title TEXT NOT NULL DEFAULT '',"
+                " status TEXT NOT NULL DEFAULT 'pending', discord_message_id INTEGER, post_id TEXT,"
+                " post_results TEXT NOT NULL DEFAULT '[]', created_at REAL NOT NULL)")
+    con.execute("INSERT INTO clips (streamer, path, moment_ts, score, caption, created_at, status)"
+                " VALUES ('xQc', 'c.mp4', 1, 0.9, 'cap', 1, 'rendering')")
+    con.commit()
+    con.close()
+    clip = Store(db).get(1)
+    assert clip.video_text == "" and clip.status == "pending"   # an unfinished redraw is reopened
+
+
+def test_text_on_video_shown_and_editable_only_with_text_free_copy(tmp_path):
+    from clipper.discord_bot import CaptionModal
+    s = Store(tmp_path / "db.sqlite")
+    clip_file = tmp_path / "xqc_1.mp4"
+    clip_file.write_bytes(b"x")
+    c = s.add("xQc", clip_file, None, 1_800_000_000, 0.8, {}, {}, "cap", "title")
+    assert not any(f.name == "Text on video" for f in clip_embed(c).fields)
+    assert len(CaptionModal(c).children) == 2
+
+    (tmp_path / "xqc_1_notext.mp4").write_bytes(b"x")
+    s.update(c.id, video_text="xQc")
+    c = s.get(c.id)
+    assert any(f.name == "Text on video" and f.value == "xQc" for f in clip_embed(c).fields)
+    assert [i.custom_id for i in CaptionModal(c).children] == ["title", "caption", "video_text"]
+
+
 def test_modal_values_both_layouts():
     rows = [{"type": 1, "components": [{"type": 4, "custom_id": "caption", "value": "new cap"}]},
             {"type": 18, "component": {"type": 4, "custom_id": "title", "value": "new title"}}]

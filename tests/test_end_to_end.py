@@ -40,8 +40,8 @@ class FakeNotifier:
         self.clips.append(clip)
         return 555
 
-    async def refresh_clip(self, clip_id):
-        self.refreshed.append(clip_id)
+    async def refresh_clip(self, clip_id, new_video=False):
+        self.refreshed.append((clip_id, new_video) if new_video else clip_id)
 
 
 class FakePostForMe:
@@ -157,3 +157,29 @@ def test_retry_only_reposts_failed_accounts(tmp_path):
     assert [p[1] for p in pfm.posts] == [["spc_tiktok", "spc_yt"], ["spc_yt"]]   # TikTok not posted twice
     assert final.status == "posted"
     assert sorted(r["social_account_id"] for r in final.post_results) == ["spc_tiktok", "spc_yt"]
+
+
+def test_changing_text_on_video_rerenders_clip_and_preview(tmp_path):
+    import subprocess
+    from clipper.clips import EditStyle, cut_clip, text_free_path
+    from clipper.recorder import Chunk
+    from clipper.store import PENDING, RENDERING
+    src = tmp_path / "src.ts"
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30:duration=4",
+                    "-f", "lavfi", "-i", "sine=duration=4", "-c:v", "libx264", "-preset", "ultrafast",
+                    "-c:a", "aac", "-f", "mpegts", str(src)], check=True)
+    clip_file = cut_clip([Chunk(src, 1000.0, 4.0)], 1000.5, 1003.5, tmp_path / "xqc_1.mp4",
+                         style=EditStyle(title="xQc"), peak=1002.0)
+    before = clip_file.read_bytes()
+    notifier = FakeNotifier()
+    cfg = Config(streamers=["xQc"], data_dir=tmp_path)
+    app = App(cfg, twitch=FakeTwitch(), notifier=notifier, pfm=FakePostForMe())
+    clip = app.store.add("xQc", clip_file, None, 1002.0, 0.9, {}, {}, "cap", "title", "xQc")
+    app.store.update(clip.id, status=RENDERING)
+
+    asyncio.run(app.change_video_text(clip.id, "NO WAY", PENDING))
+    done = app.store.get(clip.id)
+    assert done.video_text == "NO WAY" and done.status == PENDING
+    assert clip_file.read_bytes() != before and text_free_path(clip_file).exists()
+    assert done.preview_path == str(clip_file)   # small enough to attach as-is
+    assert notifier.refreshed == [(clip.id, True)]

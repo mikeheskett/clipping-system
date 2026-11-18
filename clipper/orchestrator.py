@@ -13,7 +13,7 @@ from pathlib import Path
 from .chat import ChatRecorder
 from .config import Config
 from .discord_bot import DiscordBot, LogOnlyNotifier
-from .pipeline import caption_for, clip_window, find_moments, render_clip
+from .pipeline import caption_for, clip_window, find_moments, render_clip, rerender_text
 from .postforme import PostForMe
 from .recorder import Chunk, Recorder
 from .store import FAILED, POSTED, Store
@@ -155,7 +155,8 @@ class App:
             self.notifier = notifier
         elif cfg.secrets.discord_bot_token and cfg.discord.channel_id:
             self.notifier = DiscordBot(cfg.secrets.discord_bot_token, cfg.discord.channel_id,
-                                       cfg.discord.approver_user_ids, self.store, self.publish)
+                                       cfg.discord.approver_user_ids, self.store, self.publish,
+                                       self.change_video_text)
         else:
             log.warning("DISCORD_BOT_TOKEN or discord.channel_id not set: notifications go to the log only")
             self.notifier = LogOnlyNotifier()
@@ -210,12 +211,27 @@ class App:
     async def new_clip(self, streamer: str, cf):
         caption, title = caption_for(streamer, self.cfg)
         clip = self.store.add(streamer, cf.path, cf.preview, cf.moment.ts, cf.moment.score,
-                              cf.moment.signals, cf.moment.details, caption, title)
+                              cf.moment.signals, cf.moment.details, caption, title, cf.video_text)
         try:
             msg_id = await self.notifier.send_clip(clip)
             self.store.update(clip.id, discord_message_id=msg_id or None)
         except Exception:
             log.exception("could not send clip %s to Discord", clip.id)
+
+    async def change_video_text(self, clip_id: int, text: str, previous_status: str):
+        """Called when the text on the video is edited in Discord: redraw it and swap the preview."""
+        clip = self.store.get(clip_id)
+        loop = asyncio.get_running_loop()
+        try:
+            preview = await loop.run_in_executor(RENDER_POOL, rerender_text, Path(clip.path), text,
+                                                 clip.streamer, self.cfg)
+            self.store.update(clip_id, video_text=text, preview_path=str(preview) if preview else None,
+                              status=previous_status)
+        except Exception as e:
+            log.exception("could not change the text on clip %s", clip_id)
+            self.store.update(clip_id, status=previous_status)
+            await self._notify(f"⚠️ Couldn't change the text on clip #{clip_id}: {e}")
+        await self.notifier.refresh_clip(clip_id, new_video=True)
 
     async def publish(self, clip_id: int):
         """Called when a clip is approved in Discord: upload to Post for Me and post everywhere."""

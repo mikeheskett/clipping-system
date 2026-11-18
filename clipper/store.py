@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 PENDING, POSTING, POSTED, REJECTED, FAILED = "pending", "posting", "posted", "rejected", "failed"
+RENDERING = "rendering"  # text on the video is being redrawn; goes back to pending/failed after
 
 
 @dataclass
@@ -28,6 +29,7 @@ class Clip:
     post_id: str | None
     post_results: list
     created_at: float
+    video_text: str = ""
 
 
 class Store:
@@ -53,15 +55,20 @@ class Store:
                 post_results TEXT NOT NULL DEFAULT '[]',
                 created_at REAL NOT NULL
             )""")
+        cols = {r["name"] for r in self.db.execute("PRAGMA table_info(clips)")}
+        if "video_text" not in cols:  # databases made before the text on the video could be edited
+            self.db.execute("ALTER TABLE clips ADD COLUMN video_text TEXT NOT NULL DEFAULT ''")
+        # A redraw interrupted by a restart never finished: let the clip be reviewed again.
+        self.db.execute("UPDATE clips SET status = ? WHERE status = ?", (PENDING, RENDERING))
         self.db.commit()
 
     def add(self, streamer: str, path: Path, preview: Path | None, moment_ts: float, score: float,
-            signals: dict, details: dict, caption: str, title: str) -> Clip:
+            signals: dict, details: dict, caption: str, title: str, video_text: str = "") -> Clip:
         cur = self.db.execute(
             "INSERT INTO clips (streamer, path, preview_path, moment_ts, score, signals, details, caption,"
-            " title, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            " title, created_at, video_text) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (streamer, str(path), str(preview) if preview else None, moment_ts, score,
-             json.dumps(signals), json.dumps(details), caption, title, time.time()))
+             json.dumps(signals), json.dumps(details), caption, title, time.time(), video_text))
         self.db.commit()
         return self.get(cur.lastrowid)
 

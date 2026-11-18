@@ -9,7 +9,7 @@ from pathlib import Path
 from .analysis import Moment, pick_moments, score_chunk
 from .audio import get_detector, load_audio
 from .chat import ChatMessage
-from .clips import EditStyle, cut_clip, make_preview
+from .clips import EditStyle, can_edit_text, cut_clip, make_preview, retitle
 from .config import Config
 from .recorder import Chunk
 
@@ -21,6 +21,7 @@ class ClipFile:
     moment: Moment
     path: Path
     preview: Path | None
+    video_text: str = ""   # text drawn on the video (editable from Discord when a text-free copy exists)
 
 
 def find_moments(chunk: Chunk, messages: list[ChatMessage] | None, cfg: Config,
@@ -57,10 +58,19 @@ def render_clip(m: Moment, chunks: list[Chunk], out_dir: Path, stem: str, cfg: C
                 streamer: str = "") -> ClipFile:
     """Cut the clip and its Discord preview (blocking)."""
     start, end = clip_window(m, cfg)
-    path = cut_clip(chunks, start, end, out_dir / f"{stem}.mp4", cfg.clips.format,
-                    style=edit_style(streamer, cfg), peak=m.ts)
+    style = edit_style(streamer, cfg)
+    path = cut_clip(chunks, start, end, out_dir / f"{stem}.mp4", cfg.clips.format, style=style, peak=m.ts)
     preview = make_preview(path, out_dir / f"{stem}_preview.mp4", cfg.discord.preview_max_mb)
-    return ClipFile(m, path, preview)
+    text = style.title if style and can_edit_text(path) else ""
+    return ClipFile(m, path, preview, text)
+
+
+def rerender_text(clip_path: Path, text: str, streamer: str, cfg: Config) -> Path | None:
+    """Redraw the text on a clip and remake its Discord preview (blocking). Returns the new preview."""
+    style = edit_style(streamer, cfg) or EditStyle(vary=cfg.clips.vary_each_clip, font_file=cfg.clips.font_file)
+    retitle(clip_path, text, style)
+    return make_preview(clip_path, clip_path.with_name(f"{clip_path.stem}_preview.mp4"),
+                        cfg.discord.preview_max_mb)
 
 
 def caption_for(streamer: str, cfg: Config) -> tuple[str, str]:

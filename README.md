@@ -111,13 +111,19 @@ under `clips` in `config.yaml`):
 - **Different every clip**: the zoom, grade, background tint and blur, accent colour and gameplay position change a
   little each time (`vary_each_clip`). The same clip always comes out the same if it is cut again.
 
+**Changing it in Discord:** **Edit title / caption** on a clip card opens a form with the post title, the
+caption and the **text on video**. Changing the text re-makes the clip (about as long as cutting it took) and
+swaps in the new preview. Leave it empty for no text. To make this possible, each vertical clip keeps a copy
+without text (`…_notext.mp4`), so clips take about twice the disk space.
+
 `edit: false` turns all of this off. If an edited render fails (for example ffmpeg has no `drawtext`), a plain clip
 is made instead and a warning is logged. If no title appears, set `font_file`, for example
 `C:/Windows/Fonts/impact.ttf`.
 
 ## Files and disk use
 
-- `data/clips/<streamer>/…mp4` is the finished clips. These are kept.
+- `data/clips/<streamer>/…mp4` is the finished clips, plus a `_notext` copy of each for changing the text on
+  the video. These are kept.
 - `data/streams/<streamer>/<session>/chunks/` is the raw 10-minute recordings. They are deleted after
   `recording.keep_chunks_hours`, which is 6 hours by default. At 720p60 a stream uses about 3 GB per hour.
 - `data/streams/<streamer>/<session>/chat.jsonl` is the full chat log.

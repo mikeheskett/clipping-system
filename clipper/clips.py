@@ -78,78 +78,152 @@ def find_font(preferred: str = "") -> Path | None:
     return None
 
 
+@dataclass
+class Look:
+    """The randomised look of one clip. Seeded by the clip's file name, so it can be rebuilt later
+    (to redraw the text on the video) and comes out exactly the same."""
+    zoom: float
+    contrast: float
+    saturation: float
+    gamma: float
+    blur: int
+    hue: float
+    punch: float
+    shift: int
+    accent: str
+
+    @classmethod
+    def for_clip(cls, seed: str, vary: bool) -> "Look":
+        rng = random.Random(seed)
+
+        def pick(lo: float, hi: float, default: float) -> float:
+            return round(rng.uniform(lo, hi), 3) if vary else default
+
+        return cls(
+            zoom=pick(1.0, 1.06, 1.03),            # base zoom on the gameplay
+            contrast=pick(1.04, 1.12, 1.08),
+            saturation=pick(1.10, 1.30, 1.2),
+            gamma=pick(0.96, 1.03, 1.0),
+            blur=int(pick(14, 28, 20)),
+            hue=pick(-25, 25, 0),                  # tint of the blurred background
+            punch=pick(1.18, 1.32, 1.25),
+            shift=int(pick(-90, 90, 0)) // 2 * 2,  # move the gameplay up/down a little
+            accent=rng.choice(ACCENTS) if vary else ACCENTS[0],
+        )
+
+
+def text_free_path(clip: Path) -> Path:
+    """Copy of an edited vertical clip without the text on it, kept so the text can be changed later."""
+    return clip.with_name(clip.stem + "_notext.mp4")
+
+
+def can_edit_text(clip: Path) -> bool:
+    return text_free_path(clip).exists()
+
+
+def _text_font(style: EditStyle) -> Path | None:
+    font = find_font(style.font_file)
+    if font is None or not has_drawtext():
+        return None
+    return font
+
+
+def _drawtext(look: Look, text: str, font: Path, workdir: Path) -> str:
+    """drawtext filter for the title above the gameplay. Font and text are copied into `workdir`,
+    which ffmpeg runs in, so no paths have to be escaped inside the filter string."""
+    font_name = "font" + font.suffix.lower()
+    shutil.copyfile(font, workdir / font_name)
+    (workdir / "title.txt").write_text(text, encoding="utf-8")
+    top_of_game = (1920 - int(1080 * look.zoom * 9 / 16)) // 2 + look.shift   # Twitch is 16:9
+    size = max(48, min(96, int(1500 / max(len(text), 1))))
+    y = max(80, top_of_game - size - 90)
+    return (f"drawtext=fontfile={font_name}:textfile=title.txt:"
+            f"fontsize={size}:fontcolor=white:borderw=5:bordercolor=black:"
+            f"box=1:boxcolor={look.accent}@0.9:boxborderw=26:x=(w-text_w)/2:y={y}")
+
+
 def _edited_filter(style: EditStyle, fmt: str, t0: float, duration: float, peak: float | None,
-                   seed: str, workdir: Path) -> str:
-    """Build the filtergraph for an edited clip.
+                   seed: str, workdir: Path, text_free: bool = False) -> str:
+    """Build the filtergraph for an edited clip; its output is [v].
 
     Frames reach the filters with timestamps starting at the coarse seek point, so the clip itself runs
-    from t0 to t0 + duration. Files the graph needs (font, title text) are copied into `workdir`, which
-    ffmpeg runs in, so no paths have to be escaped inside the filter string."""
-    rng = random.Random(seed)
-    vary = style.vary
-
-    def pick(lo: float, hi: float, default: float) -> float:
-        return round(rng.uniform(lo, hi), 3) if vary else default
-
-    zoom = pick(1.0, 1.06, 1.03)            # base zoom on the gameplay
-    contrast = pick(1.04, 1.12, 1.08)
-    saturation = pick(1.10, 1.30, 1.2)
-    gamma = pick(0.96, 1.03, 1.0)
-    blur = int(pick(14, 28, 20))
-    hue = pick(-25, 25, 0)                  # tint of the blurred background
-    punch = pick(1.18, 1.32, 1.25)
-    shift = int(pick(-90, 90, 0)) // 2 * 2  # move the gameplay up/down a little
-    accent = rng.choice(ACCENTS) if vary else ACCENTS[0]
-
+    from t0 to t0 + duration. With `text_free`, a second output [vnotext] has everything but the title."""
+    look = Look.for_clip(seed, style.vary)
     vertical = fmt == "vertical"
     width = 1080 if vertical else 1920
-    scaled = int(round(width * zoom / 2)) * 2
+    scaled = int(round(width * look.zoom / 2)) * 2
     crop = f"{width}:ih" if vertical else f"{width}:1080"
-    grade = (f",eq=contrast={contrast}:saturation={saturation}:gamma={gamma}" if style.color_grade else "")
-    parts = [f"[0:v]scale={scaled}:-2,crop={crop},setsar=1{grade}[g]"]
+    grade = (f",eq=contrast={look.contrast}:saturation={look.saturation}:gamma={look.gamma}"
+             if style.color_grade else "")
+    src = "[src_fg]" if vertical else "[0:v]"
+    parts = ["[0:v]split[src_bg][src_fg]"] if vertical else []
+    parts.append(f"{src}scale={scaled}:-2,crop={crop},setsar=1{grade}[g]")
     fg = "[g]"
     if style.punch_zoom and peak is not None:
         # Hard punch-in: cut to a tighter crop from just before the moment until a few seconds after.
         a, b = t0 + max(0.0, peak - 0.4), t0 + min(duration, peak + 2.6)
         parts.append(f"{fg}split[g1][g2]")
-        parts.append(f"[g2]crop=w=iw/{punch}:h=ih/{punch}:x=(iw-ow)/2:y=(ih-oh)*0.45,scale={width}:-2[gz]")
+        parts.append(f"[g2]crop=w=iw/{look.punch}:h=ih/{look.punch}:x=(iw-ow)/2:y=(ih-oh)*0.45,"
+                     f"scale={width}:-2[gz]")
         parts.append(f"[g1][gz]overlay=(W-w)/2:(H-h)/2:enable='between(t,{a:.3f},{b:.3f})'[gp]")
         fg = "[gp]"
 
+    out = fg
     if vertical:
-        bg_grade = f",hue=h={hue}" if vary else ""
-        parts.insert(0, "[0:v]split[src_bg][src_fg]")
-        parts[1] = parts[1].replace("[0:v]", "[src_fg]", 1)
+        bg_grade = f",hue=h={look.hue}" if style.vary else ""
         parts.append(f"[src_bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
-                     f"boxblur={blur}:5,eq=brightness=-0.12:saturation=1.3{bg_grade}[bg]")
-        parts.append(f"[bg]{fg}overlay=(W-w)/2:(H-h)/2+{shift},setsar=1[v0]")
+                     f"boxblur={look.blur}:5,eq=brightness=-0.12:saturation=1.3{bg_grade}[bg]")
+        parts.append(f"[bg]{fg}overlay=(W-w)/2:(H-h)/2+{look.shift},setsar=1[v0]")
         out = "[v0]"
-        top_of_game = (1920 - int(width * zoom * 9 / 16)) // 2 + shift   # Twitch is 16:9
-    else:
-        out, top_of_game = fg, 0
-
-    if style.title and vertical:
-        font = find_font(style.font_file)
-        if font is None or not has_drawtext():
-            log.warning("no usable font or ffmpeg lacks drawtext: clips are made without the title")
-        else:
-            shutil.copyfile(font, workdir / ("font" + font.suffix.lower()))
-            (workdir / "title.txt").write_text(style.title, encoding="utf-8")
-            size = max(48, min(96, int(1500 / max(len(style.title), 1))))
-            y = max(80, top_of_game - size - 90)
-            parts.append(f"{out}drawtext=fontfile=font{font.suffix.lower()}:textfile=title.txt:"
-                         f"fontsize={size}:fontcolor=white:borderw=5:bordercolor=black:"
-                         f"box=1:boxcolor={accent}@0.9:boxborderw=26:"
-                         f"x=(w-text_w)/2:y={y}[v1]")
-            out = "[v1]"
 
     if style.progress_bar:
-        parts.append(f"color=c={accent}:s={width}x14:r=30[bar]")
+        parts.append(f"color=c={look.accent}:s={width}x14:r=30[bar]")
         parts.append(f"{out}[bar]overlay=x='-w+w*(t-{t0:.3f})/{duration:.3f}':y=H-h:shortest=1[v2]")
         out = "[v2]"
 
+    text = ""
+    font = None
+    if vertical and (style.title or text_free):
+        font = _text_font(style)
+        if font is None:
+            log.warning("no usable font or ffmpeg lacks drawtext: clips are made without text on them")
+            text_free = False
+        else:
+            text = style.title
+
+    if text_free:
+        parts.append(f"{out}split[vt][vn]")
+        parts.append("[vn]format=yuv420p[vnotext]")
+        out = "[vt]"
+    if text:
+        parts.append(f"{out}{_drawtext(look, text, font, workdir)}[v1]")
+        out = "[v1]"
     parts.append(f"{out}format=yuv420p[v]")
     return ";".join(parts)
+
+
+def retitle(clip: Path, text: str, style: EditStyle) -> Path:
+    """Redraw the text on an edited clip from its text-free copy, replacing the clip file."""
+    base = text_free_path(clip)
+    if not base.exists():
+        raise FileNotFoundError(f"no text-free copy of {clip.name}, so its text can't be changed")
+    text = text.strip()
+    tmp_out = clip.with_name(clip.stem + "_retitle.mp4")
+    if not text:
+        shutil.copyfile(base, tmp_out)
+    else:
+        font = _text_font(style)
+        if font is None:
+            raise RuntimeError("no usable font, or ffmpeg was built without drawtext")
+        with tempfile.TemporaryDirectory(prefix="clipedit_") as tmp:
+            vf = _drawtext(Look.for_clip(clip.stem, style.vary), text, font, Path(tmp)) + ",format=yuv420p"
+            subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+                            "-i", str(base.resolve()), "-map", "0:v:0", "-map", "0:a:0?", "-vf", vf,
+                            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "copy",
+                            "-movflags", "+faststart", str(tmp_out.resolve())],
+                           check=True, capture_output=True, cwd=tmp)
+    os.replace(tmp_out, clip)
+    return clip
 
 
 def chunks_for_window(chunks: list[Chunk], start: float, end: float) -> list[Chunk]:
@@ -171,8 +245,9 @@ def cut_clip(chunks: list[Chunk], start: float, end: float, out_path: Path, fmt:
     Chunks from one recording keep continuous MPEG-TS timestamps, so they can be joined with ffmpeg's
     concat protocol and seeked as one stream.
 
-    With a `style`, the clip is edited (title, punch-in at `peak`, colour grade, progress bar). If the
-    edited render fails for any reason, the plain clip is made instead so no moment is lost."""
+    With a `style`, the clip is edited (title, punch-in at `peak`, colour grade, progress bar), and a
+    vertical clip also gets a text-free copy (see `text_free_path`). If the edited render fails for any
+    reason, the plain clip is made instead so no moment is lost."""
     parts = chunks_for_window(chunks, start, end)
     if not parts:
         raise ValueError("no recorded chunks cover this clip window")
@@ -194,27 +269,38 @@ def cut_clip(chunks: list[Chunk], start: float, end: float, out_path: Path, fmt:
     head = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y"]
     if coarse:
         head += ["-ss", f"{coarse:.3f}"]
-    head += ["-i", src, "-ss", f"{fine:.3f}", "-t", f"{duration:.3f}"]
-    tail = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-            "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-movflags", "+faststart", str(out_path)]
+    head += ["-i", src]
 
+    def output(label: str, path: Path, crf: int) -> list[str]:
+        # -ss/-t after -i trim each output separately, so they're repeated for every output file.
+        return ["-ss", f"{fine:.3f}", "-t", f"{duration:.3f}", "-map", label, "-map", "0:a:0?",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", str(crf),
+                "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-movflags", "+faststart", str(path)]
+
+    base = text_free_path(out_path)
+    base.unlink(missing_ok=True)
     if style is not None:
+        # Vertical clips also get a text-free copy so the text can be changed from Discord later.
+        keep_base = fmt == "vertical"
         with tempfile.TemporaryDirectory(prefix="clipedit_") as tmp:
             try:
-                graph = _edited_filter(style, fmt, fine, duration,
-                                       None if peak is None else peak - start, out_path.stem, Path(tmp))
-                subprocess.run(head + ["-filter_complex", graph, "-map", "[v]", "-map", "0:a:0?"] + tail,
-                               check=True, capture_output=True, cwd=tmp)
+                graph = _edited_filter(style, fmt, fine, duration, None if peak is None else peak - start,
+                                       out_path.stem, Path(tmp), text_free=keep_base)
+                cmd = head + ["-filter_complex", graph] + output("[v]", out_path, 20)
+                if "[vnotext]" in graph:
+                    cmd += output("[vnotext]", base, 18)
+                subprocess.run(cmd, check=True, capture_output=True, cwd=tmp)
                 return out_path
             except subprocess.CalledProcessError as e:
+                base.unlink(missing_ok=True)
                 log.warning("edited render failed, making a plain clip instead: %s",
                             (e.stderr or b"").decode(errors="replace").strip()[-500:])
 
     if fmt == "vertical":
-        mid = ["-filter_complex", VERTICAL_FILTER, "-map", "[v]", "-map", "0:a:0?"]
+        cmd = head + ["-filter_complex", VERTICAL_FILTER] + output("[v]", out_path, 20)
     else:
-        mid = ["-map", "0:v:0", "-map", "0:a:0?", "-vf", "format=yuv420p"]
-    subprocess.run(head + mid + tail, check=True, capture_output=True)
+        cmd = head + ["-vf", "format=yuv420p"] + output("0:v:0", out_path, 20)
+    subprocess.run(cmd, check=True, capture_output=True)
     return out_path
 
 
