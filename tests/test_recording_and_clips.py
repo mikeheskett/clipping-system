@@ -191,3 +191,37 @@ def test_streamlink_records_hls_when_pycryptodome_is_blocked(tmp_path):
     assert b"continuing without it" in out.stderr
     (tmp_path / "out.ts").write_bytes(out.stdout)
     assert abs(probe_duration(tmp_path / "out.ts") - 6) < 0.5
+
+
+def seam_hash(path, at):
+    """Hash of the band across the middle of the frame, where the text sits in the split layout."""
+    import hashlib, subprocess
+    raw = subprocess.run(["ffmpeg", "-loglevel", "error", "-ss", str(at), "-i", str(path), "-frames:v", "1",
+                          "-vf", "crop=1080:240:0:680,scale=108:24", "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+                         capture_output=True, check=True).stdout
+    return hashlib.md5(bytes(b // 32 for b in raw)).hexdigest()
+
+
+def test_split_layout_text_only_shows_at_the_start(tmp_path):
+    """Webcam on top, gameplay below; the text goes away after title_seconds, also after it's changed."""
+    import json, subprocess
+    from clipper.recorder import Chunk
+    src = tmp_path / "src.ts"
+    # Still picture so frames at different times only differ by the text.
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "smptebars=size=1280x720:rate=30:duration=8",
+                    "-f", "lavfi", "-i", "sine=duration=8", "-c:v", "libx264", "-preset", "ultrafast",
+                    "-c:a", "aac", "-f", "mpegts", str(src)], check=True)
+    style = EditStyle(title="xQc", facecam=(0.75, 0.0, 0.25, 0.3), title_seconds=2, progress_bar=False, vary=False)
+    clip = cut_clip([Chunk(src, 1000.0, 8.0)], 1001.0, 1007.0, tmp_path / "xqc_2.mp4", style=style)
+    info = json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_streams", "-of", "json", str(clip)],
+                                     capture_output=True, text=True).stdout)
+    v = next(s for s in info["streams"] if s["codec_type"] == "video")
+    assert (v["width"], v["height"]) == (1080, 1920)
+
+    base = text_free_path(clip)
+    assert seam_hash(clip, 1) != seam_hash(base, 1)      # text showing at 1 s
+    assert seam_hash(clip, 4) == seam_hash(base, 4)      # gone by 4 s
+
+    retitle(clip, "NEW TEXT", EditStyle())               # layout comes from the saved spot, not this style
+    assert seam_hash(clip, 1) != seam_hash(base, 1)
+    assert seam_hash(clip, 4) == seam_hash(base, 4)

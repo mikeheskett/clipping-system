@@ -48,6 +48,15 @@ clips:
   color_grade: true      # punchier contrast and colour
   vary_each_clip: true   # randomise zoom, grade, background tint, accent colour and layout per clip
   font_file: ""          # e.g. C:/Windows/Fonts/impact.ttf — empty finds a bold system font
+  title_seconds: 7       # how long the text stays on screen from the start (0 = whole clip)
+  # split: streamer's webcam zoomed in on top, gameplay below. blur: gameplay on a blurred background.
+  # Streamers with no facecam below always use blur.
+  layout: split
+  # Where each webcam is in the stream: [x, y, width, height] in percent of the frame.
+  # Run `python -m clipper facecam xQc` while they're live to see a grid and test a box.
+  facecams: {}
+  #   xQc: [0, 0, 25, 30]
+  #   TheBurntPeanut: [72, 55, 28, 45]
 
 discord:
   # Right-click the channel → Copy Channel ID (turn on Developer Mode in Discord settings first).

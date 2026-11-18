@@ -45,13 +45,39 @@ def clip_window(m: Moment, cfg: Config) -> tuple[float, float]:
     return m.ts - cfg.clips.preroll_seconds, m.ts + cfg.clips.postroll_seconds
 
 
+_warned_no_facecam: set[str] = set()
+
+
+def facecam_for(streamer: str, cfg: Config) -> tuple | None:
+    """The streamer's webcam box from config as fractions (x, y, w, h), or None."""
+    for name, box in (cfg.clips.facecams or {}).items():
+        if str(name).lower() != streamer.lower():
+            continue
+        try:
+            x, y, w, h = (float(v) / 100 for v in box)
+        except (TypeError, ValueError):
+            log.warning("clips.facecams.%s should be [x, y, width, height] in percent, got %r", name, box)
+            return None
+        if not (0 <= x < 1 and 0 <= y < 1 and 0 < w <= 1 - x + 1e-6 and 0 < h <= 1 - y + 1e-6):
+            log.warning("clips.facecams.%s %r goes outside the frame", name, box)
+            return None
+        return (x, y, w, h)
+    return None
+
+
 def edit_style(streamer: str, cfg: Config) -> EditStyle | None:
     c = cfg.clips
     if not c.edit:
         return None
     title = c.title.format(streamer=streamer).strip() if streamer and c.title else ""
+    facecam = facecam_for(streamer, cfg) if streamer and c.layout == "split" else None
+    if c.layout == "split" and streamer and facecam is None and streamer.lower() not in _warned_no_facecam:
+        _warned_no_facecam.add(streamer.lower())
+        log.info("no facecam set for %s, so their clips use the blurred layout. Run "
+                 "`python -m clipper facecam %s` to set one up.", streamer, streamer)
     return EditStyle(title=title, punch_zoom=c.punch_zoom, progress_bar=c.progress_bar,
-                     color_grade=c.color_grade, vary=c.vary_each_clip, font_file=c.font_file)
+                     color_grade=c.color_grade, vary=c.vary_each_clip, font_file=c.font_file,
+                     facecam=facecam, title_seconds=c.title_seconds)
 
 
 def render_clip(m: Moment, chunks: list[Chunk], out_dir: Path, stem: str, cfg: Config,

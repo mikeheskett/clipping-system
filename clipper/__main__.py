@@ -1,4 +1,4 @@
-"""python -m clipper {run,check,accounts,analyze}"""
+"""python -m clipper {run,check,accounts,analyze,facecam}"""
 
 from __future__ import annotations
 
@@ -138,6 +138,74 @@ def cmd_analyze(cfg, args):
         print(f"{line}\n    → {cf.path}")
 
 
+def _grab_live(login: str, out: Path, seconds: int = 4) -> Path:
+    """Record a few seconds of a live stream with Streamlink."""
+    import subprocess
+    sl = subprocess.Popen([sys.executable, "-m", "clipper.streamlink_runner", "--stdout", "--loglevel", "error",
+                           "--twitch-disable-ads", f"twitch.tv/{login}", "720p60,720p,best"],
+                          stdout=subprocess.PIPE)
+    try:
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", "pipe:0", "-t", str(seconds),
+                        "-c", "copy", "-f", "mpegts", str(out)], stdin=sl.stdout, check=True, timeout=90)
+    finally:
+        sl.kill()
+    if not out.exists() or out.stat().st_size == 0:
+        sys.exit(f"Couldn't get video from twitch.tv/{login}. Are they live?")
+    return out
+
+
+def cmd_facecam(cfg, args):
+    """Show a stream frame with a percent grid, and optionally test a facecam box in the split layout."""
+    import subprocess
+    import tempfile
+    from .clips import EditStyle, cut_clip, find_font, has_drawtext, probe_duration
+    from .recorder import Chunk
+
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    source = Path(args.source)
+    name = source.stem
+    if not source.is_file():
+        name = args.source.lower()
+        print(f"Grabbing a few seconds of twitch.tv/{name}…")
+        source = _grab_live(name, out_dir / f"{name}_sample.ts")
+    at = min(args.at, max(0.0, probe_duration(source) - 2.5))
+
+    grid_png = out_dir / f"{name}_grid.png"
+    vf = "scale=1280:720,drawgrid=w=iw/10:h=ih/10:t=2:c=white@0.6"
+    font = find_font(cfg.clips.font_file) if has_drawtext() else None
+    with tempfile.TemporaryDirectory() as tmp:
+        if font:
+            import shutil as sh
+            sh.copyfile(font, Path(tmp) / ("font" + font.suffix.lower()))
+            f = "font" + font.suffix.lower()
+            for i in range(1, 10):
+                lab = f"fontfile={f}:fontsize=22:fontcolor=yellow:borderw=3:bordercolor=black:text={i * 10}"
+                vf += f",drawtext={lab}:x={i * 128 + 4}:y=4,drawtext={lab}:x=4:y={i * 72 + 4}"
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{at:.2f}",
+                        "-i", str(source.resolve()), "-frames:v", "1", "-vf", vf, str(grid_png.resolve())],
+                       check=True, cwd=tmp)
+    print(f"Grid (lines every 10%): {grid_png}")
+
+    if args.box:
+        x, y, w, h = args.box
+        style = EditStyle(title=name, facecam=(x / 100, y / 100, w / 100, h / 100), vary=False)
+        clip = cut_clip([Chunk(source, 0.0, probe_duration(source))], at, at + 2, out_dir / f"{name}_test.mp4",
+                        style=style, peak=None)
+        layout_png = out_dir / f"{name}_layout.png"
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", "1", "-i", str(clip),
+                        "-frames:v", "1", "-vf", "scale=540:-2", str(layout_png)], check=True)
+        for p in (clip, clip.with_name(clip.stem + "_notext.mp4"), clip.with_name(clip.stem + "_notext.json")):
+            p.unlink(missing_ok=True)
+        print(f"Split layout with that box: {layout_png}")
+        print("If it looks right, add this under clips: in config.yaml:\n"
+              f"  facecams:\n    {args.source if not Path(args.source).is_file() else 'StreamerName'}: "
+              f"[{x:g}, {y:g}, {w:g}, {h:g}]")
+    else:
+        print("Find the webcam on the grid, then run again with --box X Y WIDTH HEIGHT (percent), "
+              "e.g. --box 0 0 25 30 for a webcam in the top-left quarter.")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="clipper", description="Twitch live clipping system")
     p.add_argument("-c", "--config", default="config.yaml")
@@ -156,6 +224,12 @@ def main(argv=None):
     a.add_argument("--out", default="data/clips/manual")
     a.add_argument("--no-clips", action="store_true", help="only list moments")
     a.add_argument("--streamer", help="name shown as the clip title")
+    f = sub.add_parser("facecam", help="find where a streamer's webcam is, for the split layout")
+    f.add_argument("source", help="a streamer who is live now (e.g. xQc), or a video file / recorded chunk")
+    f.add_argument("--box", nargs=4, type=float, metavar=("X", "Y", "W", "H"),
+                   help="webcam box to test, in percent of the frame")
+    f.add_argument("--at", type=float, default=1.0, help="seconds into the video to take the frame from")
+    f.add_argument("--out", default="data/facecam")
     args = p.parse_args(argv)
 
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
@@ -164,7 +238,8 @@ def main(argv=None):
     for noisy in ("httpx", "httpx2", "huggingface_hub", "discord.gateway", "httpcore"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
     cfg = load_config(args.config)
-    {"run": cmd_run, "check": cmd_check, "accounts": cmd_accounts, "analyze": cmd_analyze}[args.cmd](cfg, args)
+    {"run": cmd_run, "check": cmd_check, "accounts": cmd_accounts, "analyze": cmd_analyze,
+     "facecam": cmd_facecam}[args.cmd](cfg, args)
 
 
 if __name__ == "__main__":

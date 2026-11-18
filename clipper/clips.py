@@ -50,6 +50,11 @@ class EditStyle:
     color_grade: bool = True    # punchier contrast and colour
     vary: bool = True           # small random differences per clip (zoom, grade, colours, layout)
     font_file: str = ""         # font for the title ("" = find a bold system font)
+    # Where the streamer's webcam is in the stream, as fractions of the frame (x, y, width, height).
+    # With it, vertical clips are split: webcam zoomed in on top, gameplay below. Without it, the
+    # gameplay sits on a blurred copy of itself.
+    facecam: tuple | None = None
+    title_seconds: float = 7.0  # how long the text stays on screen from the start (0 = whole clip)
 
 
 @lru_cache(maxsize=1)
@@ -91,6 +96,7 @@ class Look:
     punch: float
     shift: int
     accent: str
+    cam_h: int      # height of the webcam panel in the split layout (gameplay gets the rest)
 
     @classmethod
     def for_clip(cls, seed: str, vary: bool) -> "Look":
@@ -109,12 +115,36 @@ class Look:
             punch=pick(1.18, 1.32, 1.25),
             shift=int(pick(-90, 90, 0)) // 2 * 2,  # move the gameplay up/down a little
             accent=rng.choice(ACCENTS) if vary else ACCENTS[0],
+            cam_h=int(pick(740, 860, 800)) // 2 * 2,
         )
+
+
+@dataclass
+class TextSpot:
+    """Where and how the text sits on a clip. Saved next to the text-free copy so the text can be
+    redrawn identically even if the layout settings change later."""
+    y: str            # drawtext y expression
+    accent: str
+    seconds: float    # 0 = whole clip
+
+    def save(self, path: Path):
+        path.write_text(json.dumps(self.__dict__), encoding="utf-8")
+
+    @classmethod
+    def load(cls, path: Path) -> "TextSpot | None":
+        try:
+            return cls(**json.loads(path.read_text(encoding="utf-8")))
+        except (OSError, ValueError, TypeError):
+            return None
 
 
 def text_free_path(clip: Path) -> Path:
     """Copy of an edited vertical clip without the text on it, kept so the text can be changed later."""
     return clip.with_name(clip.stem + "_notext.mp4")
+
+
+def text_spot_path(clip: Path) -> Path:
+    return clip.with_name(clip.stem + "_notext.json")
 
 
 def can_edit_text(clip: Path) -> bool:
@@ -128,18 +158,24 @@ def _text_font(style: EditStyle) -> Path | None:
     return font
 
 
-def _drawtext(look: Look, text: str, font: Path, workdir: Path) -> str:
-    """drawtext filter for the title above the gameplay. Font and text are copied into `workdir`,
-    which ffmpeg runs in, so no paths have to be escaped inside the filter string."""
+def _text_spot(look: Look, split: bool, seconds: float) -> TextSpot:
+    if split:   # centred on the line between the webcam and the gameplay
+        return TextSpot(y=f"{look.cam_h}-text_h/2", accent=look.accent, seconds=seconds)
+    top_of_game = (1920 - int(1080 * look.zoom * 9 / 16)) // 2 + look.shift   # Twitch is 16:9
+    return TextSpot(y=f"{top_of_game}-text_h-90", accent=look.accent, seconds=seconds)
+
+
+def _drawtext(spot: TextSpot, text: str, font: Path, workdir: Path, t0: float = 0.0) -> str:
+    """drawtext filter for the text on the video, shown from t0 for `spot.seconds`. Font and text are
+    copied into `workdir`, which ffmpeg runs in, so no paths have to be escaped in the filter string."""
     font_name = "font" + font.suffix.lower()
     shutil.copyfile(font, workdir / font_name)
     (workdir / "title.txt").write_text(text, encoding="utf-8")
-    top_of_game = (1920 - int(1080 * look.zoom * 9 / 16)) // 2 + look.shift   # Twitch is 16:9
     size = max(48, min(96, int(1500 / max(len(text), 1))))
-    y = max(80, top_of_game - size - 90)
+    timing = f":enable='lt(t,{t0 + spot.seconds:.3f})'" if spot.seconds > 0 else ""
     return (f"drawtext=fontfile={font_name}:textfile=title.txt:"
             f"fontsize={size}:fontcolor=white:borderw=5:bordercolor=black:"
-            f"box=1:boxcolor={look.accent}@0.9:boxborderw=26:x=(w-text_w)/2:y={y}")
+            f"box=1:boxcolor={spot.accent}@0.9:boxborderw=26:x=(w-text_w)/2:y={spot.y}{timing}")
 
 
 def _edited_filter(style: EditStyle, fmt: str, t0: float, duration: float, peak: float | None,
@@ -150,14 +186,21 @@ def _edited_filter(style: EditStyle, fmt: str, t0: float, duration: float, peak:
     from t0 to t0 + duration. With `text_free`, a second output [vnotext] has everything but the title."""
     look = Look.for_clip(seed, style.vary)
     vertical = fmt == "vertical"
+    split = vertical and style.facecam is not None
     width = 1080 if vertical else 1920
-    scaled = int(round(width * look.zoom / 2)) * 2
-    crop = f"{width}:ih" if vertical else f"{width}:1080"
     grade = (f",eq=contrast={look.contrast}:saturation={look.saturation}:gamma={look.gamma}"
              if style.color_grade else "")
     src = "[src_fg]" if vertical else "[0:v]"
     parts = ["[0:v]split[src_bg][src_fg]"] if vertical else []
-    parts.append(f"{src}scale={scaled}:-2,crop={crop},setsar=1{grade}[g]")
+    if split:
+        # Gameplay fills the bottom panel edge to edge: scale to its height, keep the middle.
+        game_h = 1920 - look.cam_h
+        tall = int(round(game_h * look.zoom / 2)) * 2
+        parts.append(f"{src}scale=-2:{tall},crop={width}:{game_h},setsar=1{grade}[g]")
+    else:
+        scaled = int(round(width * look.zoom / 2)) * 2
+        crop = f"{width}:ih" if vertical else f"{width}:1080"
+        parts.append(f"{src}scale={scaled}:-2,crop={crop},setsar=1{grade}[g]")
     fg = "[g]"
     if style.punch_zoom and peak is not None:
         # Hard punch-in: cut to a tighter crop from just before the moment until a few seconds after.
@@ -169,7 +212,14 @@ def _edited_filter(style: EditStyle, fmt: str, t0: float, duration: float, peak:
         fg = "[gp]"
 
     out = fg
-    if vertical:
+    if split:
+        x, y, w, h = style.facecam
+        parts.append(f"[src_bg]crop=w=iw*{w}:h=ih*{h}:x=iw*{x}:y=ih*{y},"
+                     f"scale=1080:{look.cam_h}:force_original_aspect_ratio=increase,"
+                     f"crop=1080:{look.cam_h},setsar=1{grade}[cam]")
+        parts.append(f"[cam]{fg}vstack,drawbox=x=0:y={look.cam_h - 4}:w=iw:h=8:color={look.accent}:t=fill[v0]")
+        out = "[v0]"
+    elif vertical:
         bg_grade = f",hue=h={look.hue}" if style.vary else ""
         parts.append(f"[src_bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
                      f"boxblur={look.blur}:5,eq=brightness=-0.12:saturation=1.3{bg_grade}[bg]")
@@ -191,12 +241,14 @@ def _edited_filter(style: EditStyle, fmt: str, t0: float, duration: float, peak:
         else:
             text = style.title
 
+    spot = _text_spot(look, split, style.title_seconds)
     if text_free:
         parts.append(f"{out}split[vt][vn]")
         parts.append("[vn]format=yuv420p[vnotext]")
+        spot.save(workdir / "spot.json")
         out = "[vt]"
     if text:
-        parts.append(f"{out}{_drawtext(look, text, font, workdir)}[v1]")
+        parts.append(f"{out}{_drawtext(spot, text, font, workdir, t0)}[v1]")
         out = "[v1]"
     parts.append(f"{out}format=yuv420p[v]")
     return ";".join(parts)
@@ -216,7 +268,10 @@ def retitle(clip: Path, text: str, style: EditStyle) -> Path:
         if font is None:
             raise RuntimeError("no usable font, or ffmpeg was built without drawtext")
         with tempfile.TemporaryDirectory(prefix="clipedit_") as tmp:
-            vf = _drawtext(Look.for_clip(clip.stem, style.vary), text, font, Path(tmp)) + ",format=yuv420p"
+            # Clips made before the spot was saved used the blurred layout with the text on all the time.
+            spot = (TextSpot.load(text_spot_path(clip))
+                    or _text_spot(Look.for_clip(clip.stem, style.vary), split=False, seconds=0))
+            vf = _drawtext(spot, text, font, Path(tmp)) + ",format=yuv420p"
             subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
                             "-i", str(base.resolve()), "-map", "0:v:0", "-map", "0:a:0?", "-vf", vf,
                             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "copy",
@@ -279,6 +334,7 @@ def cut_clip(chunks: list[Chunk], start: float, end: float, out_path: Path, fmt:
 
     base = text_free_path(out_path)
     base.unlink(missing_ok=True)
+    text_spot_path(out_path).unlink(missing_ok=True)
     if style is not None:
         # Vertical clips also get a text-free copy so the text can be changed from Discord later.
         keep_base = fmt == "vertical"
@@ -290,6 +346,8 @@ def cut_clip(chunks: list[Chunk], start: float, end: float, out_path: Path, fmt:
                 if "[vnotext]" in graph:
                     cmd += output("[vnotext]", base, 18)
                 subprocess.run(cmd, check=True, capture_output=True, cwd=tmp)
+                if base.exists() and (Path(tmp) / "spot.json").exists():
+                    shutil.copyfile(Path(tmp) / "spot.json", text_spot_path(out_path))
                 return out_path
             except subprocess.CalledProcessError as e:
                 base.unlink(missing_ok=True)

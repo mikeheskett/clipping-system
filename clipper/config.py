@@ -58,6 +58,13 @@ class ClipConfig:
     color_grade: bool = True    # punchier contrast and colour
     vary_each_clip: bool = True # randomise zoom, grade, colours and layout a little per clip
     font_file: str = ""         # font for the title; empty = find a bold system font (Impact/Arial Bold)
+    title_seconds: float = 7    # how long the text stays on screen from the start (0 = whole clip)
+    # "split" = streamer's webcam zoomed in on top, gameplay below (needs that streamer in `facecams`);
+    # "blur" = gameplay on a blurred copy of itself. Streamers without a facecam entry always use blur.
+    layout: str = "split"
+    # Where each streamer's webcam is in their stream: [x, y, width, height] in percent of the frame.
+    # Find it with `python -m clipper facecam <streamer or video>`.
+    facecams: dict = field(default_factory=dict)
 
 
 @dataclass

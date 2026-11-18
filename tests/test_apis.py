@@ -170,3 +170,17 @@ def test_discord_setup_errors_are_readable(tmp_path):
         asyncio.run(make("ok", discord.Forbidden(Resp(), {"code": 50001, "message": "Missing Access"})).start())
     with pytest.raises(DiscordSetupError, match="No channel with ID 42"):
         asyncio.run(make("ok", discord.NotFound(Resp(), "Unknown Channel")).start())
+
+
+def test_facecam_config():
+    from clipper.config import Config
+    from clipper.pipeline import edit_style, facecam_for
+    cfg = Config()
+    cfg.clips.facecams = {"xQc": [75, 0, 25, 30], "Broken": [90, 0, 20, 30], "Typo": [1, 2]}
+    assert facecam_for("XQC", cfg) == (0.75, 0.0, 0.25, 0.3)       # names match case-insensitively
+    assert facecam_for("Broken", cfg) is None                      # runs off the right edge
+    assert facecam_for("Typo", cfg) is None
+    assert edit_style("xQc", cfg).facecam == (0.75, 0.0, 0.25, 0.3)
+    assert edit_style("Jynxzi", cfg).facecam is None               # not set up: blurred layout
+    cfg.clips.layout = "blur"
+    assert edit_style("xQc", cfg).facecam is None

@@ -101,10 +101,41 @@ or "audio laughter 0.43".
 
 ## Clip editing
 
+### Split layout (webcam on top, gameplay below)
+
+Vertical clips put the streamer's webcam, zoomed in, across the top and the gameplay across the bottom, with
+the title on the line between them for the first 7 seconds (`title_seconds`). The webcam is in a different
+place on every stream, so tell it where once per streamer:
+
+```bash
+python -m clipper facecam xQc                       # while xQc is live (or give a video file / recorded chunk)
+```
+
+This saves `data/facecam/xqc_grid.png`: a frame from the stream with lines every 10%. Find the webcam and
+read off its left edge, top edge, width and height in percent, then test that box:
+
+```bash
+python -m clipper facecam xQc --box 0 0 25 30
+```
+
+Open `data/facecam/xqc_layout.png` to see what a clip will look like. Adjust the numbers until the webcam fills
+the top panel, then add the line it prints to `config.yaml`:
+
+```yaml
+clips:
+  facecams:
+    xQc: [0, 0, 25, 30]
+```
+
+Streamers without an entry get the blurred-background layout. If a streamer moves their webcam, run it again.
+`layout: blur` turns the split layout off for everyone.
+
+### Other edits
+
 TikTok, Shorts and Reels push down videos that look like straight re-uploads, so each clip is edited (settings
 under `clips` in `config.yaml`):
 
-- **Title**: the streamer's name in a coloured box above the gameplay (`title`, vertical clips only).
+- **Title**: the streamer's name in a coloured box for the first 7 seconds (`title`, `title_seconds`, vertical clips only).
 - **Punch-in**: the video cuts to a closer zoom just before the funny moment and holds for about 3 seconds (`punch_zoom`).
 - **Colour grade**: more contrast and saturation (`color_grade`).
 - **Progress bar**: a thin bar along the bottom that fills as the clip plays (`progress_bar`).
